@@ -1,17 +1,22 @@
 import os
 import threading
+import requests
+
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from telebot.types import (
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+)
 
 
 # =========================================================
-# ENVIRONMENT VARIABLES
+# ENV
 # =========================================================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-G2BULK_API_KEY = os.getenv("G2BULK_API_KEY", "").strip()
+PLAYPAY_API_KEY = os.getenv("PLAYPAY_API_KEY", "").strip()
 
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "").strip()
@@ -21,9 +26,11 @@ CARD_HOLDER = os.getenv("CARD_HOLDER", "").strip()
 
 PORT = int(os.getenv("PORT", "10000"))
 
+API = "https://playpay.uz/api/v1"
+
 
 # =========================================================
-# TEKSHIRUV
+# CHECK
 # =========================================================
 
 if not BOT_TOKEN:
@@ -32,8 +39,8 @@ if not BOT_TOKEN:
 if ":" not in BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN noto'g'ri")
 
-if not G2BULK_API_KEY:
-    raise RuntimeError("G2BULK_API_KEY missing")
+if not PLAYPAY_API_KEY:
+    raise RuntimeError("PLAYPAY_API_KEY missing")
 
 if ADMIN_ID == 0:
     raise RuntimeError("ADMIN_ID missing")
@@ -49,24 +56,91 @@ user_states = {}
 
 
 # =========================================================
-# RENDER HEALTH SERVER
+# PLAYPAY REQUEST
+# =========================================================
+
+def playpay(method, endpoint, data=None):
+
+    headers = {
+        "X-API-Key": PLAYPAY_API_KEY,
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+
+    url = API + endpoint
+
+    try:
+
+        if method == "GET":
+            response = requests.get(
+                url,
+                headers=headers,
+                timeout=30
+            )
+
+        else:
+            response = requests.post(
+                url,
+                headers=headers,
+                json=data or {},
+                timeout=30
+            )
+
+        try:
+            return response.json()
+
+        except Exception:
+            return {
+                "ok": False,
+                "error": "API JSON javob qaytarmadi"
+            }
+
+    except Exception as e:
+
+        print("PLAYPAY ERROR:", e)
+
+        return {
+            "ok": False,
+            "error": "PlayPay bilan bog'lanib bo'lmadi"
+        }
+
+
+# =========================================================
+# HEALTH SERVER
 # =========================================================
 
 class HealthHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
+
         self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
+
+        self.send_header(
+            "Content-Type",
+            "text/plain; charset=utf-8"
+        )
+
         self.end_headers()
-        self.wfile.write(b"YAKURA BOT ONLINE")
+
+        self.wfile.write(
+            b"YAKURA BOT ONLINE"
+        )
 
     def log_message(self, format, *args):
         return
 
 
 def start_web_server():
-    server = HTTPServer(("0.0.0.0", PORT), HealthHandler)
-    print(f"Health server running on port {PORT}")
+
+    server = HTTPServer(
+        ("0.0.0.0", PORT),
+        HealthHandler
+    )
+
+    print(
+        f"Health server running on port {PORT}"
+    )
+
     server.serve_forever()
 
 
@@ -77,81 +151,79 @@ threading.Thread(
 
 
 # =========================================================
-# O'YINLAR
-# =========================================================
-
-GAMES = {
-
-    "pubg": {
-        "title": "📱 PUBG Mobile",
-        "items": [
-            {"id": "p1", "name": "60 UC", "price": 14000},
-            {"id": "p2", "name": "325 UC", "price": 68000},
-            {"id": "p3", "name": "660 UC", "price": 135000},
-            {"id": "p4", "name": "1800 UC", "price": 360000},
-        ]
-    },
-
-    "freefire": {
-        "title": "🔥 Free Fire",
-        "items": [
-            {"id": "f1", "name": "100 + 10 Diamonds", "price": 15000},
-            {"id": "f2", "name": "530 + 53 Diamonds", "price": 65000},
-            {"id": "f3", "name": "1080 + 108 Diamonds", "price": 130000},
-        ]
-    },
-
-    "mobile_legends": {
-        "title": "⚔️ Mobile Legends",
-        "items": [
-            {"id": "m1", "name": "86 Diamonds", "price": 20000},
-            {"id": "m2", "name": "172 Diamonds", "price": 40000},
-            {"id": "m3", "name": "257 Diamonds", "price": 60000},
-        ]
-    },
-
-    "roblox": {
-        "title": "🧱 Roblox",
-        "items": [
-            {"id": "r1", "name": "80 Robux", "price": 18000},
-            {"id": "r2", "name": "400 Robux", "price": 75000},
-            {"id": "r3", "name": "800 Robux", "price": 145000},
-        ]
-    },
-
-    "brawl_stars": {
-        "title": "⭐ Brawl Stars",
-        "items": [
-            {"id": "b1", "name": "30 Gems", "price": 25000},
-            {"id": "b2", "name": "80 Gems", "price": 60000},
-            {"id": "b3", "name": "170 Gems", "price": 125000},
-        ]
-    },
-
-    "custom": {
-        "title": "➕ Boshqa o'yin yoki ilova",
-        "items": []
-    }
-}
-
-
-# =========================================================
 # START
 # =========================================================
 
 @bot.message_handler(commands=["start"])
 def start_cmd(message):
 
-    user_states[message.chat.id] = {}
+    chat_id = message.chat.id
+
+    user_states[chat_id] = {}
+
+    games_response = playpay(
+        "GET",
+        "/games"
+    )
+
+    if not games_response.get("ok"):
+
+        bot.send_message(
+            chat_id,
+            "❌ O'yinlar ro'yxatini yuklab bo'lmadi.\n\n"
+            "Keyinroq qayta urinib ko'ring."
+        )
+
+        print(
+            "GAMES ERROR:",
+            games_response
+        )
+
+        return
+
+    games = games_response.get(
+        "games",
+        []
+    )
+
+    # Boshlanishida faqat 4 ta o'yin
+    # Keyin bu yerda qo'shimcha o'yinlarni ochamiz.
+
+    allowed_names = [
+        "PUBG Mobile",
+        "Mobile Legends",
+        "Free Fire",
+        "Roblox",
+    ]
+
+    selected_games = []
+
+    for game in games:
+
+        name = game.get("name", "")
+
+        if name in allowed_names:
+
+            selected_games.append(game)
+
+    # Agar PlayPay nomlari farq qilsa,
+    # birinchi 4 ta faol o'yinni ko'rsatamiz.
+
+    if not selected_games:
+
+        selected_games = games[:4]
 
     markup = InlineKeyboardMarkup()
 
-    for key, game in GAMES.items():
+    for game in selected_games:
+
+        game_id = game.get("game_id")
+        name = game.get("name", "Game")
 
         markup.add(
             InlineKeyboardButton(
-                game["title"],
-                callback_data=f"game_{key}"
+                f"🎮 {name}",
+                callback_data=f"game_{game_id}"
             )
         )
 
@@ -160,18 +232,21 @@ def start_cmd(message):
         markup.add(
             InlineKeyboardButton(
                 "💬 Admin bilan bog'lanish",
-                url=f"https://t.me/{ADMIN_USERNAME.replace('@', '')}"
+                url=(
+                    "https://t.me/"
+                    + ADMIN_USERNAME.replace("@", "")
+                )
             )
         )
 
     text = (
         "⚡️ YAKURA | DONAT STORE\n\n"
-        "🎮 O'yin va ilovalar uchun donat xizmati.\n\n"
-        "👇 Kerakli o'yinni tanlang:"
+        "🎮 O'yinlar uchun tezkor donat.\n\n"
+        "👇 O'yinni tanlang:"
     )
 
     bot.send_message(
-        message.chat.id,
+        chat_id,
         text,
         reply_markup=markup
     )
@@ -181,7 +256,9 @@ def start_cmd(message):
 # CALLBACK
 # =========================================================
 
-@bot.callback_query_handler(func=lambda call: True)
+@bot.callback_query_handler(
+    func=lambda call: True
+)
 def callback_handler(call):
 
     chat_id = call.message.chat.id
@@ -191,47 +268,83 @@ def callback_handler(call):
     except:
         pass
 
-    # O'YIN
+
+    # =====================================================
+    # GAME
+    # =====================================================
 
     if call.data.startswith("game_"):
 
-        game_key = call.data.replace("game_", "", 1)
+        game_id = call.data.replace(
+            "game_",
+            "",
+            1
+        )
 
-        if game_key == "custom":
+        packages_response = playpay(
+            "GET",
+            f"/games/{game_id}/packages?currency=UZS"
+        )
 
-            user_states[chat_id] = {
-                "game": "Boshqa o'yin/ilova",
-                "step": "wait_custom"
-            }
+        if not packages_response.get("ok"):
 
             bot.send_message(
                 chat_id,
-                "✍️ O'yin yoki ilova nomini yozing.\n\n"
-                "Masalan:\n"
-                "FC Mobile\n"
-                "Telegram Premium\n"
-                "Discord Nitro"
+                "❌ Paketlarni yuklab bo'lmadi."
             )
 
             return
 
-        game = GAMES.get(game_key)
+        packages = packages_response.get(
+            "packages",
+            []
+        )
 
-        if not game:
+        game_name = packages_response.get(
+            "game",
+            "O'yin"
+        )
+
+        if not packages:
+
+            bot.send_message(
+                chat_id,
+                "❌ Bu o'yinda hozircha paket yo'q."
+            )
+
             return
 
         user_states[chat_id] = {
-            "game": game["title"]
+            "game_id": int(game_id),
+            "game_name": game_name,
+            "packages": packages,
         }
 
         markup = InlineKeyboardMarkup()
 
-        for item in game["items"]:
+        for package in packages:
+
+            paket_id = package.get(
+                "paket_id"
+            )
+
+            name = package.get(
+                "name",
+                "Paket"
+            )
+
+            price = package.get(
+                "price",
+                {}
+            ).get(
+                "amount",
+                0
+            )
 
             markup.add(
                 InlineKeyboardButton(
-                    f"{item['name']} — {item['price']:,} so'm",
-                    callback_data=f"item_{item['id']}"
+                    f"📦 {name} — {price:,} so'm",
+                    callback_data=f"package_{paket_id}"
                 )
             )
 
@@ -243,7 +356,7 @@ def callback_handler(call):
         )
 
         bot.edit_message_text(
-            f"🎮 {game['title']}\n\n"
+            f"🎮 {game_name}\n\n"
             "📦 Paketni tanlang:",
             chat_id,
             call.message.message_id,
@@ -252,134 +365,267 @@ def callback_handler(call):
 
         return
 
-    # ITEM
 
-    if call.data.startswith("item_"):
+    # =====================================================
+    # PACKAGE
+    # =====================================================
 
-        item_id = call.data.replace("item_", "", 1)
+    if call.data.startswith("package_"):
+
+        paket_id = call.data.replace(
+            "package_",
+            "",
+            1
+        )
+
+        state = user_states.get(
+            chat_id,
+            {}
+        )
+
+        packages = state.get(
+            "packages",
+            []
+        )
 
         selected = None
 
-        for game in GAMES.values():
+        for package in packages:
 
-            for item in game["items"]:
+            if str(
+                package.get("paket_id")
+            ) == str(paket_id):
 
-                if item["id"] == item_id:
-                    selected = item
-                    break
-
-            if selected:
+                selected = package
                 break
 
         if not selected:
+
+            bot.send_message(
+                chat_id,
+                "❌ Paket topilmadi."
+            )
+
             return
 
-        user_states.setdefault(chat_id, {})
+        user_states[chat_id][
+            "paket_id"
+        ] = int(paket_id)
 
-        user_states[chat_id]["item_name"] = selected["name"]
-        user_states[chat_id]["price"] = selected["price"]
-        user_states[chat_id]["step"] = "wait_game_id"
+        user_states[chat_id][
+            "package_name"
+        ] = selected.get(
+            "name",
+            "Paket"
+        )
+
+        user_states[chat_id][
+            "price"
+        ] = selected.get(
+            "price",
+            {}
+        ).get(
+            "amount",
+            0
+        )
+
+        user_states[chat_id][
+            "step"
+        ] = "wait_player_id"
+
+        game_id = state.get(
+            "game_id"
+        )
+
+        # O'yin haqida ma'lumotni yana olamiz
+        games_response = playpay(
+            "GET",
+            "/games"
+        )
+
+        requires_server = False
+        requires_charname = False
+        id_label = "Player ID"
+
+        for game in games_response.get(
+            "games",
+            []
+        ):
+
+            if str(
+                game.get("game_id")
+            ) == str(game_id):
+
+                requires_server = game.get(
+                    "requires_server",
+                    False
+                )
+
+                requires_charname = game.get(
+                    "requires_charname",
+                    False
+                )
+
+                id_label = game.get(
+                    "id_label",
+                    "Player ID"
+                )
+
+                break
+
+        user_states[chat_id][
+            "requires_server"
+        ] = requires_server
+
+        user_states[chat_id][
+            "requires_charname"
+        ] = requires_charname
+
+        user_states[chat_id][
+            "id_label"
+        ] = id_label
 
         bot.send_message(
             chat_id,
-            f"✅ Paket: {selected['name']}\n"
-            f"💰 Narx: {selected['price']:,} so'm\n\n"
-            "🆔 Endi o'yin ID raqamingizni yuboring:"
+            f"✅ {selected.get('name')}\n"
+            f"💰 {user_states[chat_id]['price']:,} so'm\n\n"
+            f"🆔 {id_label} yuboring:"
         )
 
         return
 
+
+    # =====================================================
     # BACK
+    # =====================================================
 
     if call.data == "back":
 
         start_cmd(call.message)
 
+        return
+
 
 # =========================================================
-# USER MESSAGES
+# USER TEXT
 # =========================================================
 
-@bot.message_handler(content_types=["text", "photo"])
+@bot.message_handler(
+    content_types=["text", "photo"]
+)
 def handle_messages(message):
 
     chat_id = message.chat.id
 
-    state = user_states.get(chat_id, {})
+    state = user_states.get(
+        chat_id,
+        {}
+    )
 
-    step = state.get("step")
+    step = state.get(
+        "step"
+    )
 
 
-    # CUSTOM GAME
+    # =====================================================
+    # PLAYER ID
+    # =====================================================
 
-    if step == "wait_custom":
+    if step == "wait_player_id":
 
-        user_states[chat_id]["item_name"] = message.text
-        user_states[chat_id]["price"] = "Kelishiladi"
-        user_states[chat_id]["step"] = "wait_game_id"
+        if not message.text:
 
-        bot.send_message(
-            chat_id,
-            "🆔 Endi o'yin/ilova ID yoki kerakli ma'lumotni yuboring:"
+            bot.send_message(
+                chat_id,
+                "⚠️ ID raqamini matn ko'rinishida yuboring."
+            )
+
+            return
+
+        player_id = message.text.strip()
+
+        user_states[chat_id][
+            "player_id"
+        ] = player_id
+
+        if state.get(
+            "requires_server"
+        ):
+
+            user_states[chat_id][
+                "step"
+            ] = "wait_server"
+
+            bot.send_message(
+                chat_id,
+                "🌐 Server / Zone ID yuboring:"
+            )
+
+            return
+
+        validate_player(
+            chat_id
         )
 
         return
 
 
-    # GAME ID
+    # =====================================================
+    # SERVER
+    # =====================================================
 
-    if step == "wait_game_id":
+    if step == "wait_server":
 
-        user_states[chat_id]["account_info"] = message.text
-        user_states[chat_id]["step"] = "wait_receipt"
+        server_id = message.text.strip()
 
-        price = state.get("price")
+        user_states[chat_id][
+            "server_id"
+        ] = server_id
 
-        if isinstance(price, int):
-            price_text = f"{price:,} so'm"
-        else:
-            price_text = str(price)
-
-        payment = (
-            "💳 TO'LOV\n\n"
-            f"Karta: {CARD_NUMBER}\n"
-            f"Karta egasi: {CARD_HOLDER}\n\n"
-            f"💰 Summa: {price_text}\n\n"
-            "To'lovni amalga oshirgach, "
-            "chek rasmini shu yerga yuboring."
-        )
-
-        bot.send_message(
-            chat_id,
-            payment
+        validate_player(
+            chat_id
         )
 
         return
 
 
+    # =====================================================
     # RECEIPT
+    # =====================================================
 
-    if step == "wait_receipt" and message.photo:
+    if step == "wait_receipt":
+
+        if not message.photo:
+
+            bot.send_message(
+                chat_id,
+                "⚠️ To'lov chekini rasm qilib yuboring."
+            )
+
+            return
 
         photo_id = message.photo[-1].file_id
 
-        price = state.get("price")
+        price = state.get(
+            "price",
+            0
+        )
 
-        if isinstance(price, int):
-            price_text = f"{price:,} so'm"
-        else:
-            price_text = str(price)
-
-        username = message.from_user.username or "Username yo'q"
+        username = (
+            message.from_user.username
+            or "Username yo'q"
+        )
 
         admin_text = (
             "📥 YANGI BUYURTMA\n\n"
             f"👤 @{username}\n"
             f"🆔 Telegram ID: {chat_id}\n\n"
-            f"🎮 O'yin: {state.get('game')}\n"
-            f"📦 Paket: {state.get('item_name')}\n"
-            f"💰 Narx: {price_text}\n"
-            f"🆔 Account ID: {state.get('account_info')}"
+            f"🎮 O'yin: {state.get('game_name')}\n"
+            f"📦 Paket: {state.get('package_name')}\n"
+            f"💰 Narx: {price:,} so'm\n"
+            f"🆔 Player ID: {state.get('player_id')}\n"
+            f"🌐 Server: {state.get('server_id', '-')}\n"
+            f"👤 Nickname: {state.get('player_name', '-')}\n"
         )
 
         bot.send_photo(
@@ -390,8 +636,8 @@ def handle_messages(message):
 
         bot.send_message(
             chat_id,
-            "✅ Buyurtmangiz qabul qilindi!\n\n"
-            "Admin to'lovni tekshiradi va buyurtmani qayta ishlaydi."
+            "✅ Chek qabul qilindi!\n\n"
+            "Admin to'lovni tekshiradi."
         )
 
         user_states[chat_id] = {}
@@ -399,19 +645,128 @@ def handle_messages(message):
         return
 
 
-    if step == "wait_receipt":
+# =========================================================
+# VALIDATE PLAYER
+# =========================================================
+
+def validate_player(chat_id):
+
+    state = user_states.get(
+        chat_id,
+        {}
+    )
+
+    data = {
+        "game_id": state.get(
+            "game_id"
+        ),
+        "player_id": state.get(
+            "player_id"
+        ),
+    }
+
+    if state.get(
+        "requires_server"
+    ):
+
+        data["server_id"] = state.get(
+            "server_id"
+        )
+
+    if state.get(
+        "requires_charname"
+    ):
+
+        data["charname"] = state.get(
+            "charname"
+        )
+
+    result = playpay(
+        "POST",
+        "/check_id",
+        data
+    )
+
+    print(
+        "CHECK ID:",
+        result
+    )
+
+    if not result.get("ok"):
 
         bot.send_message(
             chat_id,
-            "⚠️ Iltimos, to'lov chekini rasm ko'rinishida yuboring."
+            "❌ ID tekshirishda xatolik.\n\n"
+            f"{result.get('error', 'Nomaʼlum xatolik')}"
         )
 
+        return
+
+    if not result.get("valid"):
+
+        bot.send_message(
+            chat_id,
+            "❌ Bu ID topilmadi yoki noto'g'ri.\n\n"
+            "ID/Serverni tekshirib qayta yuboring."
+        )
+
+        return
+
+    player_name = result.get(
+        "player_name",
+        ""
+    )
+
+    user_states[chat_id][
+        "player_name"
+    ] = player_name
+
+    user_states[chat_id][
+        "step"
+    ] = "wait_receipt"
+
+    price = state.get(
+        "price",
+        0
+    )
+
+    payment = (
+        "✅ AKKAUNT TOPILDI\n\n"
+        f"👤 Nickname: {player_name}\n"
+        f"🆔 ID: {state.get('player_id')}\n"
+    )
+
+    if state.get(
+        "requires_server"
+    ):
+
+        payment += (
+            f"🌐 Server: "
+            f"{state.get('server_id')}\n"
+        )
+
+    payment += (
+        "\n"
+        f"📦 Paket: {state.get('package_name')}\n"
+        f"💰 To'lov: {price:,} so'm\n\n"
+        "💳 TO'LOV\n\n"
+        f"Karta: {CARD_NUMBER}\n"
+        f"Karta egasi: {CARD_HOLDER}\n\n"
+        "To'lovni amalga oshiring va "
+        "chek rasmini shu yerga yuboring."
+    )
+
+    bot.send_message(
+        chat_id,
+        payment
+    )
+
 
 # =========================================================
-# START BOT
+# RUN
 # =========================================================
 
-print("YAKURA G2Bulk started")
+print("YAKURA BOT started")
 
 bot.infinity_polling(
     skip_pending=True,
