@@ -1,16 +1,18 @@
+import os
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # ==========================================
-# ⚙️ SOZLAMALAR (O'zingizning ma'lumotlaringizni shu yerga yozing)
+# ⚙️ SOZLAMALAR
 # ==========================================
-BOT_TOKEN = "BOT_TOKENINGIZNI_SHU_YERGA_YOZING"
-ADMIN_ID = 123456789  # O'zingizning Telegram ID raqamingiz (masalan: 123456789)
-ADMIN_USERNAME = "@admin_username"  # Telegram username'ingiz (masalan: @shoh_admin)
 
-# Uzum Visa kartangiz ma'lumotlari:
-CARD_NUMBER = "4000 0000 0000 0000"  # 16 xonali Uzum Visa karta raqamingiz
-CARD_HOLDER = "Ism Familiya"  # Visa kartangizdagi ism-familiyangiz
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "@admin_username")
+
+CARD_NUMBER = os.getenv("CARD_NUMBER", "")
+CARD_HOLDER = os.getenv("CARD_HOLDER", "")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
