@@ -1,672 +1,420 @@
 import os
-import html
-import uuid
-import logging
-import requests
-import telebot
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
+import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# =========================
-# SETTINGS
-# =========================
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-G2BULK_API_KEY = os.getenv("G2BULK_API_KEY")
+# =========================================================
+# ENVIRONMENT VARIABLES
+# =========================================================
+
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+G2BULK_API_KEY = os.getenv("G2BULK_API_KEY", "").strip()
 
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "").replace("@", "")
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "").strip()
 
-CARD_NUMBER = os.getenv("CARD_NUMBER", "")
-CARD_HOLDER = os.getenv("CARD_HOLDER", "")
+CARD_NUMBER = os.getenv("CARD_NUMBER", "").strip()
+CARD_HOLDER = os.getenv("CARD_HOLDER", "").strip()
 
-G2BULK_URL = "https://api.g2bulk.com/v1"
+PORT = int(os.getenv("PORT", "10000"))
 
-# YAKURA ustamasi
-MARKUP_PERCENT = float(os.getenv("MARKUP_PERCENT", "10"))
+
+# =========================================================
+# TEKSHIRUV
+# =========================================================
 
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN missing")
 
+if ":" not in BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN noto'g'ri")
+
 if not G2BULK_API_KEY:
     raise RuntimeError("G2BULK_API_KEY missing")
 
+if ADMIN_ID == 0:
+    raise RuntimeError("ADMIN_ID missing")
+
+
+# =========================================================
+# BOT
+# =========================================================
+
 bot = telebot.TeleBot(BOT_TOKEN)
 
-logging.basicConfig(level=logging.INFO)
-
-# user_id -> state
-users = {}
+user_states = {}
 
 
-# =========================
-# G2BULK
-# =========================
+# =========================================================
+# RENDER HEALTH SERVER
+# =========================================================
 
-class G2Bulk:
+class HealthHandler(BaseHTTPRequestHandler):
 
-    def __init__(self):
-        self.session = requests.Session()
-        self.session.headers.update({
-            "X-API-Key": G2BULK_API_KEY,
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        })
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"YAKURA BOT ONLINE")
 
-    def get_games(self):
-        r = self.session.get(
-            f"{G2BULK_URL}/games",
-            timeout=20
-        )
-        r.raise_for_status()
-        return r.json()
-
-    def get_fields(self, game_code):
-        r = self.session.post(
-            f"{G2BULK_URL}/games/fields",
-            json={"game_code": game_code},
-            timeout=20
-        )
-        r.raise_for_status()
-        return r.json()
-
-    def get_servers(self, game_code):
-        r = self.session.post(
-            f"{G2BULK_URL}/games/servers",
-            json={"game_code": game_code},
-            timeout=20
-        )
-
-        if r.status_code == 403:
-            return {}
-
-        r.raise_for_status()
-        return r.json()
-
-    def catalogue(self, game_code):
-        r = self.session.get(
-            f"{G2BULK_URL}/games/{game_code}/catalogue",
-            timeout=20
-        )
-        r.raise_for_status()
-        return r.json()
-
-    def check_player(self, game_code, player_id, server_id=None):
-
-        data = {
-            "game_code": game_code,
-            "player_id": player_id
-        }
-
-        if server_id:
-            data["server_id"] = server_id
-
-        r = self.session.post(
-            f"{G2BULK_URL}/games/checkPlayerId",
-            json=data,
-            timeout=20
-        )
-
-        r.raise_for_status()
-        return r.json()
-
-    def order(
-        self,
-        game_code,
-        catalogue_name,
-        player_id,
-        server_id=None
-    ):
-
-        data = {
-            "catalogue_name": catalogue_name,
-            "player_id": player_id,
-            "remark": "YAKURA"
-        }
-
-        if server_id:
-            data["server_id"] = server_id
-
-        headers = {
-            "X-Idempotency-Key": str(uuid.uuid4())
-        }
-
-        r = self.session.post(
-            f"{G2BULK_URL}/games/{game_code}/order",
-            json=data,
-            headers=headers,
-            timeout=30
-        )
-
-        r.raise_for_status()
-        return r.json()
-
-    def order_status(self, order_id, game_code):
-
-        r = self.session.post(
-            f"{G2BULK_URL}/games/order/status",
-            json={
-                "order_id": order_id,
-                "game_code": game_code
-            },
-            timeout=20
-        )
-
-        r.raise_for_status()
-        return r.json()
+    def log_message(self, format, *args):
+        return
 
 
-g2bulk = G2Bulk()
+def start_web_server():
+    server = HTTPServer(("0.0.0.0", PORT), HealthHandler)
+    print(f"Health server running on port {PORT}")
+    server.serve_forever()
 
 
-# =========================
-# HELPERS
-# =========================
-
-def money(value):
-    try:
-        return f"{float(value):,.0f} so'm"
-    except:
-        return str(value)
+threading.Thread(
+    target=start_web_server,
+    daemon=True
+).start()
 
 
-def markup_price(price):
-    return round(
-        float(price) * (1 + MARKUP_PERCENT / 100),
-        2
-    )
+# =========================================================
+# O'YINLAR
+# =========================================================
+
+GAMES = {
+
+    "pubg": {
+        "title": "📱 PUBG Mobile",
+        "items": [
+            {"id": "p1", "name": "60 UC", "price": 14000},
+            {"id": "p2", "name": "325 UC", "price": 68000},
+            {"id": "p3", "name": "660 UC", "price": 135000},
+            {"id": "p4", "name": "1800 UC", "price": 360000},
+        ]
+    },
+
+    "freefire": {
+        "title": "🔥 Free Fire",
+        "items": [
+            {"id": "f1", "name": "100 + 10 Diamonds", "price": 15000},
+            {"id": "f2", "name": "530 + 53 Diamonds", "price": 65000},
+            {"id": "f3", "name": "1080 + 108 Diamonds", "price": 130000},
+        ]
+    },
+
+    "mobile_legends": {
+        "title": "⚔️ Mobile Legends",
+        "items": [
+            {"id": "m1", "name": "86 Diamonds", "price": 20000},
+            {"id": "m2", "name": "172 Diamonds", "price": 40000},
+            {"id": "m3", "name": "257 Diamonds", "price": 60000},
+        ]
+    },
+
+    "roblox": {
+        "title": "🧱 Roblox",
+        "items": [
+            {"id": "r1", "name": "80 Robux", "price": 18000},
+            {"id": "r2", "name": "400 Robux", "price": 75000},
+            {"id": "r3", "name": "800 Robux", "price": 145000},
+        ]
+    },
+
+    "brawl_stars": {
+        "title": "⭐ Brawl Stars",
+        "items": [
+            {"id": "b1", "name": "30 Gems", "price": 25000},
+            {"id": "b2", "name": "80 Gems", "price": 60000},
+            {"id": "b3", "name": "170 Gems", "price": 125000},
+        ]
+    },
+
+    "custom": {
+        "title": "➕ Boshqa o'yin yoki ilova",
+        "items": []
+    }
+}
 
 
-def get_list(data):
-    if isinstance(data, list):
-        return data
-
-    if isinstance(data, dict):
-        for key in [
-            "data",
-            "games",
-            "items",
-            "results",
-            "catalogue",
-            "products"
-        ]:
-            if isinstance(data.get(key), list):
-                return data[key]
-
-    return []
-
-
-def game_code(game):
-    return str(
-        game.get("code")
-        or game.get("game_code")
-        or game.get("slug")
-        or ""
-    )
-
-
-def game_name(game):
-    return str(
-        game.get("name")
-        or game.get("title")
-        or game.get("game_name")
-        or game_code(game)
-    )
-
-
-def product_name(product):
-    return str(
-        product.get("name")
-        or product.get("title")
-        or product.get("product_name")
-        or product.get("catalogue_name")
-        or "Paket"
-    )
-
-
-def product_price(product):
-    for key in [
-        "price",
-        "amount",
-        "selling_price",
-        "cost",
-        "normal_price"
-    ]:
-        if product.get(key) is not None:
-            try:
-                return float(product[key])
-            except:
-                pass
-
-    return 0
-
-
-# =========================
+# =========================================================
 # START
-# =========================
+# =========================================================
 
 @bot.message_handler(commands=["start"])
-def start(message):
+def start_cmd(message):
 
-    users[message.chat.id] = {}
+    user_states[message.chat.id] = {}
 
-    kb = InlineKeyboardMarkup()
+    markup = InlineKeyboardMarkup()
 
-    kb.add(
-        InlineKeyboardButton(
-            "🎮 O'yinlar",
-            callback_data="games"
-        )
-    )
+    for key, game in GAMES.items():
 
-    if ADMIN_USERNAME:
-        kb.add(
+        markup.add(
             InlineKeyboardButton(
-                "👤 Admin",
-                url=f"https://t.me/{ADMIN_USERNAME}"
+                game["title"],
+                callback_data=f"game_{key}"
             )
         )
+
+    if ADMIN_USERNAME:
+
+        markup.add(
+            InlineKeyboardButton(
+                "💬 Admin bilan bog'lanish",
+                url=f"https://t.me/{ADMIN_USERNAME.replace('@', '')}"
+            )
+        )
+
+    text = (
+        "⚡️ YAKURA | DONAT STORE\n\n"
+        "🎮 O'yin va ilovalar uchun donat xizmati.\n\n"
+        "👇 Kerakli o'yinni tanlang:"
+    )
 
     bot.send_message(
         message.chat.id,
-        "⚡ <b>YAKURA DONAT</b>\n\n"
-        "🎮 O'yinni tanlang.\n"
-        "💎 Paketni tanlang.\n"
-        "🆔 Player ID kiriting.\n"
-        "🚀 Buyurtma avtomatik yuboriladi.",
-        parse_mode="HTML",
-        reply_markup=kb
+        text,
+        reply_markup=markup
     )
 
 
-# =========================
-# GAMES
-# =========================
+# =========================================================
+# CALLBACK
+# =========================================================
 
-@bot.callback_query_handler(
-    func=lambda c: c.data == "games"
-)
-def games(call):
+@bot.callback_query_handler(func=lambda call: True)
+def callback_handler(call):
+
+    chat_id = call.message.chat.id
 
     try:
-        result = g2bulk.get_games()
-        games_list = get_list(result)
-
-    except Exception as e:
-
-        logging.exception(e)
-
-        bot.answer_callback_query(
-            call.id,
-            "O'yinlarni olishda xatolik"
-        )
-        return
-
-    kb = InlineKeyboardMarkup()
-
-    for game in games_list[:100]:
-
-        code = game_code(game)
-
-        if not code:
-            continue
-
-        name = game_name(game)
-
-        kb.add(
-            InlineKeyboardButton(
-                f"🎮 {name}",
-                callback_data=f"game:{code}"
-            )
-        )
-
-    bot.edit_message_text(
-        "🎮 <b>O'YINLAR</b>\n\n"
-        "Kerakli o'yinni tanlang:",
-        call.message.chat.id,
-        call.message.message_id,
-        parse_mode="HTML",
-        reply_markup=kb
-    )
-
-
-# =========================
-# GAME
-# =========================
-
-@bot.callback_query_handler(
-    func=lambda c: c.data.startswith("game:")
-)
-def game_selected(call):
-
-    code = call.data.split(":", 1)[1]
-
-    users[call.message.chat.id] = {
-        "game_code": code
-    }
-
-    try:
-        result = g2bulk.catalogue(code)
-        products = get_list(result)
-
-    except Exception as e:
-
-        logging.exception(e)
-
-        bot.answer_callback_query(
-            call.id,
-            "Paketlarni olishda xatolik"
-        )
-        return
-
-    if not products:
-
-        bot.send_message(
-            call.message.chat.id,
-            "❌ Bu o'yin uchun paket topilmadi."
-        )
-        return
-
-    kb = InlineKeyboardMarkup()
-
-    for i, product in enumerate(products[:50]):
-
-        name = product_name(product)
-        price = product_price(product)
-        sell_price = markup_price(price)
-
-        kb.add(
-            InlineKeyboardButton(
-                f"{name} — {money(sell_price)}",
-                callback_data=f"product:{i}"
-            )
-        )
-
-    users[call.message.chat.id]["products"] = products
-
-    bot.edit_message_text(
-        "📦 <b>PAKETNI TANLANG</b>",
-        call.message.chat.id,
-        call.message.message_id,
-        parse_mode="HTML",
-        reply_markup=kb
-    )
-
-
-# =========================
-# PRODUCT
-# =========================
-
-@bot.callback_query_handler(
-    func=lambda c: c.data.startswith("product:")
-)
-def product_selected(call):
-
-    uid = call.message.chat.id
-    index = int(call.data.split(":")[1])
-
-    state = users.get(uid, {})
-    products = state.get("products", [])
-
-    if index >= len(products):
-        return
-
-    product = products[index]
-
-    state["product"] = product
-    state["step"] = "player_id"
-
-    name = product_name(product)
-    price = product_price(product)
-    sell_price = markup_price(price)
-
-    bot.send_message(
-        uid,
-        f"📦 <b>{html.escape(name)}</b>\n"
-        f"💰 Narx: <b>{money(sell_price)}</b>\n\n"
-        f"🆔 Player ID'ingizni yuboring:",
-        parse_mode="HTML"
-    )
-
-
-# =========================
-# PLAYER ID
-# =========================
-
-@bot.message_handler(
-    func=lambda m: users.get(m.chat.id, {}).get("step") == "player_id"
-)
-def player_id(message):
-
-    uid = message.chat.id
-    state = users[uid]
-
-    state["player_id"] = message.text.strip()
-    state["step"] = "server_id"
-
-    game_code_value = state["game_code"]
-
-    try:
-        servers = g2bulk.get_servers(game_code_value)
+        bot.answer_callback_query(call.id)
     except:
-        servers = {}
+        pass
 
-    server_list = get_list(servers)
+    # O'YIN
 
-    if not server_list:
+    if call.data.startswith("game_"):
 
-        state["server_id"] = None
-        confirm_order(message)
-        return
+        game_key = call.data.replace("game_", "", 1)
 
-    kb = InlineKeyboardMarkup()
+        if game_key == "custom":
 
-    for server in server_list[:50]:
+            user_states[chat_id] = {
+                "game": "Boshqa o'yin/ilova",
+                "step": "wait_custom"
+            }
 
-        sid = str(
-            server.get("id")
-            or server.get("server_id")
-            or server.get("code")
-            or ""
-        )
+            bot.send_message(
+                chat_id,
+                "✍️ O'yin yoki ilova nomini yozing.\n\n"
+                "Masalan:\n"
+                "FC Mobile\n"
+                "Telegram Premium\n"
+                "Discord Nitro"
+            )
 
-        sname = str(
-            server.get("name")
-            or server.get("title")
-            or sid
-        )
+            return
 
-        if sid:
-            kb.add(
+        game = GAMES.get(game_key)
+
+        if not game:
+            return
+
+        user_states[chat_id] = {
+            "game": game["title"]
+        }
+
+        markup = InlineKeyboardMarkup()
+
+        for item in game["items"]:
+
+            markup.add(
                 InlineKeyboardButton(
-                    sname,
-                    callback_data=f"server:{sid}"
+                    f"{item['name']} — {item['price']:,} so'm",
+                    callback_data=f"item_{item['id']}"
                 )
             )
 
-    bot.send_message(
-        uid,
-        "🌐 <b>Serverni tanlang:</b>",
-        parse_mode="HTML",
-        reply_markup=kb
-    )
-
-
-# =========================
-# SERVER
-# =========================
-
-@bot.callback_query_handler(
-    func=lambda c: c.data.startswith("server:")
-)
-def server_selected(call):
-
-    uid = call.message.chat.id
-
-    server_id = call.data.split(":", 1)[1]
-
-    users[uid]["server_id"] = server_id
-
-    confirm_order(call.message)
-
-
-# =========================
-# CONFIRM
-# =========================
-
-def confirm_order(message):
-
-    uid = message.chat.id
-    state = users[uid]
-
-    product = state["product"]
-
-    name = product_name(product)
-    cost = product_price(product)
-    price = markup_price(cost)
-
-    kb = InlineKeyboardMarkup()
-
-    kb.add(
-        InlineKeyboardButton(
-            "💳 To'lov",
-            callback_data="pay"
+        markup.add(
+            InlineKeyboardButton(
+                "⬅️ Orqaga",
+                callback_data="back"
+            )
         )
-    )
 
-    kb.add(
-        InlineKeyboardButton(
-            "❌ Bekor qilish",
-            callback_data="cancel"
+        bot.edit_message_text(
+            f"🎮 {game['title']}\n\n"
+            "📦 Paketni tanlang:",
+            chat_id,
+            call.message.message_id,
+            reply_markup=markup
         )
-    )
 
-    bot.send_message(
-        uid,
-        f"🛒 <b>BUYURTMA</b>\n\n"
-        f"📦 {html.escape(name)}\n"
-        f"🆔 {html.escape(state['player_id'])}\n"
-        f"💰 <b>{money(price)}</b>\n\n"
-        f"Buyurtmani davom ettirasizmi?",
-        parse_mode="HTML",
-        reply_markup=kb
-    )
-
-
-# =========================
-# PAYMENT
-# =========================
-
-@bot.callback_query_handler(
-    func=lambda c: c.data == "pay"
-)
-def payment(call):
-
-    uid = call.message.chat.id
-    state = users.get(uid)
-
-    if not state:
         return
 
-    product = state["product"]
-    price = markup_price(product_price(product))
+    # ITEM
 
-    state["step"] = "receipt"
+    if call.data.startswith("item_"):
 
-    bot.send_message(
-        uid,
-        f"💳 <b>TO'LOV</b>\n\n"
-        f"Karta: <code>{html.escape(CARD_NUMBER)}</code>\n"
-        f"Karta egasi: <b>{html.escape(CARD_HOLDER)}</b>\n\n"
-        f"💰 Summa: <b>{money(price)}</b>\n\n"
-        f"To'lovdan keyin chek rasmini yuboring.",
-        parse_mode="HTML"
-    )
+        item_id = call.data.replace("item_", "", 1)
 
+        selected = None
 
-# =========================
-# RECEIPT
-# =========================
+        for game in GAMES.values():
 
-@bot.message_handler(
-    content_types=["photo"]
-)
-def receipt(message):
+            for item in game["items"]:
 
-    uid = message.chat.id
-    state = users.get(uid, {})
+                if item["id"] == item_id:
+                    selected = item
+                    break
 
-    if state.get("step") != "receipt":
+            if selected:
+                break
+
+        if not selected:
+            return
+
+        user_states.setdefault(chat_id, {})
+
+        user_states[chat_id]["item_name"] = selected["name"]
+        user_states[chat_id]["price"] = selected["price"]
+        user_states[chat_id]["step"] = "wait_game_id"
+
+        bot.send_message(
+            chat_id,
+            f"✅ Paket: {selected['name']}\n"
+            f"💰 Narx: {selected['price']:,} so'm\n\n"
+            "🆔 Endi o'yin ID raqamingizni yuboring:"
+        )
+
         return
 
-    photo = message.photo[-1].file_id
+    # BACK
 
-    bot.send_message(
-        uid,
-        "⏳ To'lov tekshirilmoqda..."
-    )
+    if call.data == "back":
 
-    # Admin uchun buyurtma
-    product = state["product"]
+        start_cmd(call.message)
 
-    price = markup_price(
-        product_price(product)
-    )
 
-    admin_text = (
-        "📥 <b>YANGI BUYURTMA</b>\n\n"
-        f"👤 User ID: <code>{uid}</code>\n"
-        f"🎮 Game: <code>{html.escape(state['game_code'])}</code>\n"
-        f"📦 Paket: {html.escape(product_name(product))}\n"
-        f"🆔 Player: <code>{html.escape(state['player_id'])}</code>\n"
-        f"💰 Narx: <b>{money(price)}</b>"
-    )
+# =========================================================
+# USER MESSAGES
+# =========================================================
 
-    if ADMIN_ID:
+@bot.message_handler(content_types=["text", "photo"])
+def handle_messages(message):
+
+    chat_id = message.chat.id
+
+    state = user_states.get(chat_id, {})
+
+    step = state.get("step")
+
+
+    # CUSTOM GAME
+
+    if step == "wait_custom":
+
+        user_states[chat_id]["item_name"] = message.text
+        user_states[chat_id]["price"] = "Kelishiladi"
+        user_states[chat_id]["step"] = "wait_game_id"
+
+        bot.send_message(
+            chat_id,
+            "🆔 Endi o'yin/ilova ID yoki kerakli ma'lumotni yuboring:"
+        )
+
+        return
+
+
+    # GAME ID
+
+    if step == "wait_game_id":
+
+        user_states[chat_id]["account_info"] = message.text
+        user_states[chat_id]["step"] = "wait_receipt"
+
+        price = state.get("price")
+
+        if isinstance(price, int):
+            price_text = f"{price:,} so'm"
+        else:
+            price_text = str(price)
+
+        payment = (
+            "💳 TO'LOV\n\n"
+            f"Karta: {CARD_NUMBER}\n"
+            f"Karta egasi: {CARD_HOLDER}\n\n"
+            f"💰 Summa: {price_text}\n\n"
+            "To'lovni amalga oshirgach, "
+            "chek rasmini shu yerga yuboring."
+        )
+
+        bot.send_message(
+            chat_id,
+            payment
+        )
+
+        return
+
+
+    # RECEIPT
+
+    if step == "wait_receipt" and message.photo:
+
+        photo_id = message.photo[-1].file_id
+
+        price = state.get("price")
+
+        if isinstance(price, int):
+            price_text = f"{price:,} so'm"
+        else:
+            price_text = str(price)
+
+        username = message.from_user.username or "Username yo'q"
+
+        admin_text = (
+            "📥 YANGI BUYURTMA\n\n"
+            f"👤 @{username}\n"
+            f"🆔 Telegram ID: {chat_id}\n\n"
+            f"🎮 O'yin: {state.get('game')}\n"
+            f"📦 Paket: {state.get('item_name')}\n"
+            f"💰 Narx: {price_text}\n"
+            f"🆔 Account ID: {state.get('account_info')}"
+        )
+
         bot.send_photo(
             ADMIN_ID,
-            photo,
-            caption=admin_text,
-            parse_mode="HTML"
+            photo_id,
+            caption=admin_text
         )
 
-    # Hozircha admin tasdiqlaydi.
-    # Keyingi bosqichda avtomatik payment qo'shamiz.
+        bot.send_message(
+            chat_id,
+            "✅ Buyurtmangiz qabul qilindi!\n\n"
+            "Admin to'lovni tekshiradi va buyurtmani qayta ishlaydi."
+        )
 
-    bot.send_message(
-        uid,
-        "✅ Chek qabul qilindi.\n\n"
-        "Admin to'lovni tasdiqlagach buyurtma G2Bulk'ka yuboriladi."
-    )
+        user_states[chat_id] = {}
 
-    users[uid] = {}
-
-
-# =========================
-# CANCEL
-# =========================
-
-@bot.callback_query_handler(
-    func=lambda c: c.data == "cancel"
-)
-def cancel(call):
-
-    users.pop(call.message.chat.id, None)
-
-    bot.send_message(
-        call.message.chat.id,
-        "❌ Buyurtma bekor qilindi.\n\n/start"
-    )
+        return
 
 
-# =========================
-# RUN
-# =========================
+    if step == "wait_receipt":
 
-if __name__ == "__main__":
+        bot.send_message(
+            chat_id,
+            "⚠️ Iltimos, to'lov chekini rasm ko'rinishida yuboring."
+        )
 
-    print("YAKURA G2Bulk started")
 
-    bot.infinity_polling(
-        skip_pending=True
+# =========================================================
+# START BOT
+# =========================================================
+
+print("YAKURA G2Bulk started")
+
+bot.infinity_polling(
+    skip_pending=True,
+    timeout=60,
+    long_polling_timeout=60
         )
